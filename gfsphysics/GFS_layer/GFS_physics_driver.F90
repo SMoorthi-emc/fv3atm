@@ -497,9 +497,10 @@ module module_physics_driver
 
       integer, dimension(size(Grid%xlon,1)) ::                          &
            kbot, ktop, kcnv, soiltyp, vegtype, kpbl, slopetyp, kinver,  &
-           levshc, islmsk,                                              &
+           levshc, islmsk
+!          levshc, islmsk,                                              &
 !--- coupling inputs for physics
-           islmsk_cice
+!          islmsk_cice
 
 !--- LOGICAL VARIABLES
       logical :: lprnt, revap, mg3_as_mg2, skip_macro, trans_aero
@@ -545,7 +546,7 @@ module module_physics_driver
            ocalvisbm_cpl, ocalvisdf_cpl, dtzm, temrain1, t2mmp, q2mp,   &
            psaur_l, praur_l,                                            &
 !--- coupling inputs for physics
-           dtsfc_cice, dqsfc_cice, dusfc_cice, dvsfc_cice,              &
+!          dtsfc_cice, dqsfc_cice,                                      &
 !          dtsfc_cice, dqsfc_cice, dusfc_cice, dvsfc_cice, ulwsfc_cice, &
 !--- for CS-convection
            wcbmax
@@ -1111,16 +1112,18 @@ module module_physics_driver
 !## CCPP ##* GFS_surface_generic.F90/GFS_surface_generic_pre_run
       if (Model%cplflx) then
         do i=1,im
-          islmsk_cice(i) = nint(Coupling%slimskin_cpl(i))
-          flag_cice(i)   = (islmsk_cice(i) == 4)
+          flag_cice(i)   = nint(Coupling%slimskin_cpl(i)) == 4
 
-          if (flag_cice(i)) then
+!         islmsk_cice(i) = nint(Coupling%slimskin_cpl(i))
+!         flag_cice(i)   = (islmsk_cice(i) == 4)
+
+!         if (flag_cice(i)) then
 !           ulwsfc_cice(i) = Coupling%ulwsfcin_cpl(i)
-            dusfc_cice(i)  = Coupling%dusfcin_cpl(i)
-            dvsfc_cice(i)  = Coupling%dvsfcin_cpl(i)
-            dtsfc_cice(i)  = Coupling%dtsfcin_cpl(i)
-            dqsfc_cice(i)  = Coupling%dqsfcin_cpl(i)
-          endif
+!           dusfc_cice(i)  = Coupling%dusfcin_cpl(i)
+!           dvsfc_cice(i)  = Coupling%dvsfcin_cpl(i)
+!           dtsfc_cice(i)  = Coupling%dtsfcin_cpl(i)
+!           dqsfc_cice(i)  = Coupling%dqsfcin_cpl(i)
+!         endif
         enddo
       endif
 !*## CCPP ##
@@ -1922,7 +1925,8 @@ module module_physics_driver
         if (Model%cplflx) then
           do i=1,im
             if (flag_cice(i)) then
-               islmsk (i) = islmsk_cice(i)
+               islmsk (i) = 4
+!              islmsk (i) = islmsk_cice(i)
             endif
           enddo
 !*## CCPP ##
@@ -1935,8 +1939,11 @@ module module_physics_driver
            (im, Statein%tgrs(:,1),                                       &
             Statein%qgrs(:,1,1),  cd3(:,2), cdq3(:,2),                   &
             Statein%prsl(:,1),    wind,                                  &
-            flag_cice, flag_iter, dqsfc_cice, dtsfc_cice,                &
-            dusfc_cice, dvsfc_cice,                                      &
+            flag_cice, flag_iter, 
+            Coupling%dqsfcin_cpl(i), Coupling%dtsfcin_cpl(i),            &
+!           flag_cice, flag_iter, dqsfc_cice, dtsfc_cice,                &
+            Coupling%dusfcin_cpl, Coupling%dvsfcin_cpl,                  &
+!           dusfc_cice, dvsfc_cice,                                      &
 !  ---  outputs:
             qss3(:,2), cmm3(:,2), chh3(:,2), evap3(:,2), hflx3(:,2),     &
             stress3(:,2))
