@@ -2,10 +2,12 @@
   SUBROUTINE GCYCLE (nblks, Model, Grid, Sfcprop, Cldprop)
 !
 !
-    USE MACHINE,      only: kind_phys
-    USE PHYSCONS,     only: PI => con_PI, con_tice
-    USE GFS_typedefs, only: GFS_control_type, GFS_grid_type, &
-                            GFS_sfcprop_type, GFS_cldprop_type
+    USE MACHINE,        only : kind_phys
+    USE PHYSCONS,       only : PI => con_PI, con_tice
+    USE GFS_typedefs,   only : GFS_control_type, GFS_grid_type, &
+                               GFS_sfcprop_type, GFS_cldprop_type
+    use sfccyc_module,  only : sfccycle
+    use sfccyc_module2, only : sfccycle2
     implicit none
 
     integer,                  intent(in)    :: nblks
@@ -22,6 +24,7 @@
            J_INDEX(Model%nx*Model%ny)
 
     real(kind=kind_phys) ::                     &
+         sig1t (Model%nx*Model%ny),             &
            RLA (Model%nx*Model%ny),             &
            RLO (Model%nx*Model%ny),             &
         SLMASK (Model%nx*Model%ny),             &
@@ -49,17 +52,21 @@
         VMXFCS (Model%nx*Model%ny),             &
         SLPFCS (Model%nx*Model%ny),             &
         ABSFCS (Model%nx*Model%ny),             &
-        ALFFC1 (Model%nx*Model%ny*2),           &
-        ALBFC1 (Model%nx*Model%ny*4),           &
-        SMCFC1 (Model%nx*Model%ny*Model%lsoil), &
-        STCFC1 (Model%nx*Model%ny*Model%lsoil), &
-        SLCFC1 (Model%nx*Model%ny*Model%lsoil)
+        ALFFC1 (Model%nx*Model%ny,2),           &
+        ALBFC1 (Model%nx*Model%ny,4),           &
+        SMCFC1 (Model%nx*Model%ny,Model%lsoil), &
+        STCFC1 (Model%nx*Model%ny,Model%lsoil), &
+        SLCFC1 (Model%nx*Model%ny,Model%lsoil)
+
+
+    real, allocatable :: albfcs(:,:), alffcs(:,:), smcfcs(:,:), &
+                         stcfcs(:,:), slcfcs(:,:)
 
     logical          :: lake(Model%nx*Model%ny)
 
     character(len=6) :: tile_num_ch
-    real(kind=kind_phys), parameter :: pifac=180.0/pi
-    real(kind=kind_phys)            :: sig1t, dt_warm
+    real(kind=kind_phys), parameter :: pifac=180.0/pi, epsln=1.0e-4_kind_phys
+    real(kind=kind_phys)            :: dt_warm
     integer :: npts, len, nb, ix, jx, ls, ios, ll
     logical :: exists
 !
@@ -87,177 +94,539 @@
       sig1t = 0.0_kind_phys
       npts  = Model%nx*Model%ny
 !
-      len = 0
-      do nb = 1,nblks
-        do ix = 1,size(Grid(nb)%xlat,1)
-          len = len + 1
-          RLA     (len)          = Grid(nb)%xlat      (ix) * pifac
-          RLO     (len)          = Grid(nb)%xlon      (ix) * pifac
-          OROG    (len)          = Sfcprop(nb)%oro    (ix)
-          OROG_UF (len)          = Sfcprop(nb)%oro_uf (ix)
-          SLIFCS  (len)          = Sfcprop(nb)%slmsk  (ix)
-          if ( Model%nstf_name(1) > 0 ) then
-            TSFFCS(len)          = Sfcprop(nb)%tref   (ix)
-          else
-            TSFFCS(len)          = Sfcprop(nb)%tsfc   (ix)
-          endif
-          SNOFCS  (len)          = Sfcprop(nb)%weasd  (ix)
-          ZORFCS  (len)          = Sfcprop(nb)%zorll  (ix)
-          if (SLIFCS(len) > 1.9_kind_phys .and. .not. Model%frac_grid) then
-            ZORFCS  (len)        = Sfcprop(nb)%zorli  (ix)
-          elseif (SLIFCS(len) < 0.1_kind_phys .and. .not. Model%frac_grid) then
-            ZORFCS  (len)        = Sfcprop(nb)%zorlo  (ix)
-          endif
-          TG3FCS  (len)          = Sfcprop(nb)%tg3    (ix)
-          CNPFCS  (len)          = Sfcprop(nb)%canopy (ix)
-!         F10MFCS (len)          = Sfcprop(nb)%f10m   (ix)
-          VEGFCS  (len)          = Sfcprop(nb)%vfrac  (ix)
-          VETFCS  (len)          = Sfcprop(nb)%vtype  (ix)
-          SOTFCS  (len)          = Sfcprop(nb)%stype  (ix)
-          CVFCS   (len)          = Cldprop(nb)%cv     (ix)
-          CVBFCS  (len)          = Cldprop(nb)%cvb    (ix)
-          CVTFCS  (len)          = Cldprop(nb)%cvt    (ix)
-          SWDFCS  (len)          = Sfcprop(nb)%snowd  (ix)
-          SIHFCS  (len)          = Sfcprop(nb)%hice   (ix)
-          SICFCS  (len)          = Sfcprop(nb)%fice   (ix)
-          SITFCS  (len)          = Sfcprop(nb)%tisfc  (ix)
-          VMNFCS  (len)          = Sfcprop(nb)%shdmin (ix)
-          VMXFCS  (len)          = Sfcprop(nb)%shdmax (ix)
-          SLPFCS  (len)          = Sfcprop(nb)%slope  (ix)
-          ABSFCS  (len)          = Sfcprop(nb)%snoalb (ix)
+      if (Model%frac_grid) then
+        len = 0
+        do nb = 1,nblks
+          do ix = 1,size(Grid(nb)%xlat,1)
+            if (Sfcprop(nb)%landfrac(ix) >= epsln) then
+              len = len + 1
+              RLA     (len)   = Grid(nb)%xlat      (ix) * pifac
+              RLO     (len)   = Grid(nb)%xlon      (ix) * pifac
+              OROG    (len)   = Sfcprop(nb)%oro    (ix)
+              OROG_UF (len)   = Sfcprop(nb)%oro_uf (ix)
+              SLIFCS  (len)   = 1.0_kind_phys
+              TSFFCS  (len)   = Sfcprop(nb)%tsfcl  (ix)
+              SNOFCS  (len)   = Sfcprop(nb)%weasd  (ix)
+              ZORFCS  (len)   = Sfcprop(nb)%zorll  (ix)
+              TG3FCS  (len)   = Sfcprop(nb)%tg3    (ix)
+              CNPFCS  (len)   = Sfcprop(nb)%canopy (ix)
+!             F10MFCS (len)   = Sfcprop(nb)%f10m   (ix)
+              VEGFCS  (len)   = Sfcprop(nb)%vfrac  (ix)
+              VETFCS  (len)   = Sfcprop(nb)%vtype  (ix)
+              SOTFCS  (len)   = Sfcprop(nb)%stype  (ix)
+              CVFCS   (len)   = Cldprop(nb)%cv     (ix)
+              CVBFCS  (len)   = Cldprop(nb)%cvb    (ix)
+              CVTFCS  (len)   = Cldprop(nb)%cvt    (ix)
+              SWDFCS  (len)   = Sfcprop(nb)%snowd  (ix)
+              SIHFCS  (len)   = Sfcprop(nb)%hice   (ix)
+              SICFCS  (len)   = Sfcprop(nb)%fice   (ix)
+              SITFCS  (len)   = Sfcprop(nb)%tisfc  (ix)
+              VMNFCS  (len)   = Sfcprop(nb)%shdmin (ix)
+              VMXFCS  (len)   = Sfcprop(nb)%shdmax (ix)
+              SLPFCS  (len)   = Sfcprop(nb)%slope  (ix)
+              ABSFCS  (len)   = Sfcprop(nb)%snoalb (ix)
 
-          ALFFC1  (len       )   = Sfcprop(nb)%facsf  (ix)
-          ALFFC1  (len + npts)   = Sfcprop(nb)%facwf  (ix)
+              ALFFC1  (len,1) = Sfcprop(nb)%facsf  (ix)
+              ALFFC1  (len,2) = Sfcprop(nb)%facwf  (ix)
 
-          ALBFC1  (len         ) = Sfcprop(nb)%alvsf  (ix)
-          ALBFC1  (len + npts  ) = Sfcprop(nb)%alvwf  (ix)
-          ALBFC1  (len + npts*2) = Sfcprop(nb)%alnsf  (ix)
-          ALBFC1  (len + npts*3) = Sfcprop(nb)%alnwf  (ix)
+              ALBFC1  (len,1) = Sfcprop(nb)%alvsf  (ix)
+              ALBFC1  (len,2) = Sfcprop(nb)%alvwf  (ix)
+              ALBFC1  (len,3) = Sfcprop(nb)%alnsf  (ix)
+              ALBFC1  (len,4) = Sfcprop(nb)%alnwf  (ix)
 
+              do ls = 1,Model%lsoil
+                SMCFC1 (len,ls) = Sfcprop(nb)%smc (ix,ls)
+                STCFC1 (len,ls) = Sfcprop(nb)%stc (ix,ls)
+                SLCFC1 (len,ls) = Sfcprop(nb)%slc (ix,ls)
+              enddo
+
+              AISFCS(len) = 0.0_kind_phys
+            endif
+
+      if (Model%me == 109) write(3000+Model%me,*)' nb=',nb,' ix=',ix,' landfrac=',Sfcprop(nb)%landfrac(ix), &
+          ' len=',len,' me=',Model%me
+!     if (Model%me .eq. 0)
+!    &   print *,' len=',len,' rla=',rla(len),' rlo=',rlo(len)
+          ENDDO                 !-----END BLOCK SIZE LOOP------------------------------
+        ENDDO                   !-----END BLOCK LOOP-------------------------------
+!       write(2000+Model%me,*)' me=',Model%me,' land len=',len
+        if (Model%me == 109)write(3000+Model%me,*)' me=',Model%me,' land len=',len
+
+        if (len > 0) then
+          write(2000+Model%me,*)' me=',Model%me,' land len=',len,' slifcs=',slifcs(1:len)
+          allocate (albfcs(len,4),  alffcs(len,2),  smcfcs(len,Model%lsoil), &
+                           stcfcs(len,Model%lsoil), slcfcs(len,Model%lsoil))
+          albfcs(1:len,1:4) = ALBFC1(1:len,1:4)
+          alffcs(1:len,1:2) = ALFFC1(1:len,1:2)
           do ls = 1,Model%lsoil
-            SMCFC1 (len + (ls-1)*npts) = Sfcprop(nb)%smc (ix,ls)
-            STCFC1 (len + (ls-1)*npts) = Sfcprop(nb)%stc (ix,ls)
-            SLCFC1 (len + (ls-1)*npts) = Sfcprop(nb)%slc (ix,ls)
+            do ix=1,len
+              smcfcs(ix,ls) = SMCFC1(ix,ls)
+              stcfcs(ix,ls) = STCFC1(ix,ls)
+              slcfcs(ix,ls) = SLCFC1(ix,ls)
+            enddo
           enddo
 
-          IF (SLIFCS(len) < 0.1_kind_phys .OR. SLIFCS(len) > 1.5_kind_phys) THEN
-             SLMASK(len) = 0.0_kind_phys
-          ELSE
-             SLMASK(len) = 1.0_kind_phys
-          ENDIF
-
-          IF (SLIFCS(len) > 1.99_kind_phys) THEN
-            AISFCS(len) = 1.0_kind_phys
-          ELSE
-            AISFCS(len) = 0.0_kind_phys
-          ENDIF
-          if (Sfcprop(nb)%lakefrac(ix) > 0.0_kind_phys) then
-            lake(len) = .true.
+! check
+!         call mymaxmin(slifcs,len,len,1,'slifcs')
+!         call mymaxmin(slmask,len,len,1,'slmsk')
+!
+#ifndef INTERNAL_FILE_NML
+          inquire (file=trim(Model%fn_nml),exist=exists)
+          if (.not. exists) then
+            write(6,*) 'gcycle:: namelist file: ',trim(Model%fn_nml),' does not exist'
+            stop
           else
-            lake(len) = .false.
+            open (unit=Model%nlunit, file=trim(Model%fn_nml), action='READ', status='OLD', iostat=ios)
+            rewind (Model%nlunit)
           endif
+#endif
+          CALL SFCCYCLE (9997, len, Model%lsoil, SIG1T, Model%fhcyc,  &
+                         Model%idate(4), Model%idate(2),              &
+                         Model%idate(3), Model%idate(1),              &
+                         Model%phour, RLA, RLO, SLMASK,               &
+!                        Model%fhour, RLA, RLO, SLMASK,               &
+                         OROG, OROG_UF, Model%USE_UFO, Model%nst_anl, &
+                         SIHFCS, SICFCS, SITFCS, SWDFCS, SLCFCS,      &
+                         VMNFCS, VMXFCS, SLPFCS, ABSFCS, TSFFCS,      &
+                         SNOFCS, ZORFCS, ALBFCS, TG3FCS, CNPFCS,      &
+                         SMCFCS, STCFCS, SLIFCS, AISFCS,              &
+                         VEGFCS, VETFCS, SOTFCS, ALFFCS, CVFCS,       &
+                         CVBFCS, CVTFCS, Model%me, Model%nlunit,      &
+                         size(Model%input_nml_file),                  &
+                         Model%input_nml_file,                        &
+                         lake, Model%min_lakeice, Model%min_seaice,   &
+                         Model%ialb, Model%isot, Model%ivegsrc,       &
+                         trim(tile_num_ch), i_index, j_index)
+#ifndef INTERNAL_FILE_NML
+          close (Model%nlunit)
+#endif
+
+          len = 0
+          do nb = 1,nblks
+            do ix = 1,size(Grid(nb)%xlat,1)
+              if (Sfcprop(nb)%landfrac(ix) >= epsln) then
+                len = len + 1
+!               Sfcprop(nb)%slmsk  (ix) = SLIFCS  (len)
+                Sfcprop(nb)%tsfc   (ix) = TSFFCS  (len)
+                Sfcprop(nb)%weasd  (ix) = SNOFCS  (len)
+                Sfcprop(nb)%zorll  (ix) = ZORFCS  (len)
+                Sfcprop(nb)%tg3    (ix) = TG3FCS  (len)
+                Sfcprop(nb)%canopy (ix) = CNPFCS  (len)
+!               Sfcprop(nb)%f10m   (ix) = F10MFCS (len)
+                Sfcprop(nb)%vfrac  (ix) = VEGFCS  (len)
+                Sfcprop(nb)%vtype  (ix) = VETFCS  (len)
+                Sfcprop(nb)%stype  (ix) = SOTFCS  (len)
+                Cldprop(nb)%cv     (ix) = CVFCS   (len)
+                Cldprop(nb)%cvb    (ix) = CVBFCS  (len)
+                Cldprop(nb)%cvt    (ix) = CVTFCS  (len)
+                Sfcprop(nb)%snowd  (ix) = SWDFCS  (len)
+                Sfcprop(nb)%hice   (ix) = SIHFCS  (len)
+                Sfcprop(nb)%fice   (ix) = SICFCS  (len)
+                Sfcprop(nb)%tisfc  (ix) = SITFCS  (len)
+                Sfcprop(nb)%shdmin (ix) = VMNFCS  (len)
+                Sfcprop(nb)%shdmax (ix) = VMXFCS  (len)
+                Sfcprop(nb)%slope  (ix) = SLPFCS  (len)
+                Sfcprop(nb)%snoalb (ix) = ABSFCS  (len)
+
+                Sfcprop(nb)%facsf  (ix) = ALFFC1  (len,1)
+                Sfcprop(nb)%facwf  (ix) = ALFFC1  (len,2)
+
+                Sfcprop(nb)%alvsf  (ix) = ALBFC1  (len,1)
+                Sfcprop(nb)%alvwf  (ix) = ALBFC1  (len,2)
+                Sfcprop(nb)%alnsf  (ix) = ALBFC1  (len,3)
+                Sfcprop(nb)%alnwf  (ix) = ALBFC1  (len,4)
+                do ls = 1,Model%lsoil
+                  Sfcprop(nb)%smc (ix,ls) = SMCFC1 (len,ls)
+                  Sfcprop(nb)%stc (ix,ls) = STCFC1 (len,ls)
+                  Sfcprop(nb)%slc (ix,ls) = SLCFC1 (len,ls)
+                enddo
+              endif
+            ENDDO                 !-----END BLOCK SIZE LOOP--------------------------
+          ENDDO                   !-----END BLOCK LOOP-------------------------------
+          deallocate (albfcs, alffcs, smcfcs, stcfcs, slcfcs) 
+        if (Model%me == 109)write(3000+Model%me,*)' me=',Model%me,' land len=',len
+        endif
+
+!       call for oceanfrac > 0.0
+        len = 0
+        do nb = 1,nblks
+          do ix = 1,size(Grid(nb)%xlat,1)
+            if (Sfcprop(nb)%landfrac(ix) < epsln) then
+              len = len + 1
+              RLA     (len)          = Grid(nb)%xlat      (ix) * pifac
+              RLO     (len)          = Grid(nb)%xlon      (ix) * pifac
+              if (Sfcprop(nb)%lakefrac(ix) > 0.0_kind_phys) then
+                lake(len) = .true.
+              else
+                lake(len) = .false.
+              endif
+              OROG    (len)          = Sfcprop(nb)%oro    (ix)
+              OROG_UF (len)          = Sfcprop(nb)%oro_uf (ix)
+              SIHFCS  (len)          = Sfcprop(nb)%hice   (ix)
+              SICFCS  (len)          = Sfcprop(nb)%fice   (ix)
+              SITFCS  (len)          = Sfcprop(nb)%tisfc  (ix)
+              if (lake(len) .and. SICFCS(len) >= Model%min_lakeice) then
+                SLIFCS  (len) = 2.0_kind_phys
+              elseif (SICFCS(len) >= Model%min_seaice) then
+                SLIFCS  (len) = 2.0_kind_phys
+              else
+                SLIFCS  (len) = 0.0_kind_phys
+              endif
+              if ( Model%nstf_name(1) > 0 ) then
+                TSFFCS(len)          = Sfcprop(nb)%tref   (ix)
+              else
+                TSFFCS(len)          = Sfcprop(nb)%tsfc   (ix)
+              endif
+              SNOFCS  (len)          = Sfcprop(nb)%weasd  (ix)
+              ZORFCS  (len)          = Sfcprop(nb)%zorll  (ix)
+              if (SLIFCS(len) > 1.9_kind_phys) then
+                ZORFCS  (len)        = Sfcprop(nb)%zorli  (ix)
+              elseif (SLIFCS(len) < 0.1_kind_phys) then
+                ZORFCS  (len)        = Sfcprop(nb)%zorlo  (ix)
+              endif
+              TG3FCS  (len)          = Sfcprop(nb)%tg3    (ix)
+              CNPFCS  (len)          = Sfcprop(nb)%canopy (ix)
+!             F10MFCS (len)          = Sfcprop(nb)%f10m   (ix)
+              VEGFCS  (len)          = Sfcprop(nb)%vfrac  (ix)
+              VETFCS  (len)          = Sfcprop(nb)%vtype  (ix)
+              SOTFCS  (len)          = Sfcprop(nb)%stype  (ix)
+              CVFCS   (len)          = Cldprop(nb)%cv     (ix)
+              CVBFCS  (len)          = Cldprop(nb)%cvb    (ix)
+              CVTFCS  (len)          = Cldprop(nb)%cvt    (ix)
+              SWDFCS  (len)          = Sfcprop(nb)%snowd  (ix)
+              SIHFCS  (len)          = Sfcprop(nb)%hice   (ix)
+              SICFCS  (len)          = Sfcprop(nb)%fice   (ix)
+              SITFCS  (len)          = Sfcprop(nb)%tisfc  (ix)
+              VMNFCS  (len)          = Sfcprop(nb)%shdmin (ix)
+              VMXFCS  (len)          = Sfcprop(nb)%shdmax (ix)
+              SLPFCS  (len)          = Sfcprop(nb)%slope  (ix)
+              ABSFCS  (len)          = Sfcprop(nb)%snoalb (ix)
+
+              ALFFC1  (len,1) = Sfcprop(nb)%facsf  (ix)
+              ALFFC1  (len,2) = Sfcprop(nb)%facwf  (ix)
+
+              ALBFC1  (len,1) = Sfcprop(nb)%alvsf  (ix)
+              ALBFC1  (len,2) = Sfcprop(nb)%alvwf  (ix)
+              ALBFC1  (len,3) = Sfcprop(nb)%alnsf  (ix)
+              ALBFC1  (len,4) = Sfcprop(nb)%alnwf  (ix)
+
+              do ls = 1,Model%lsoil
+                SMCFC1 (len,ls) = Sfcprop(nb)%smc (ix,ls)
+                STCFC1 (len,ls) = Sfcprop(nb)%stc (ix,ls)
+                SLCFC1 (len,ls) = Sfcprop(nb)%slc (ix,ls)
+              enddo
+
+              IF (SLIFCS(len) > 1.99_kind_phys) THEN
+                AISFCS(len) = 1.0_kind_phys
+              ELSE
+                AISFCS(len) = 0.0_kind_phys
+              ENDIF
+
+            endif
+
+!     if (Model%me == 109) write(3000+Model%me,*)' nb=',nb,' ix=',ix,' landfrac=',Sfcprop(nb)%landfrac(ix), &
+!         ' len=',len,' me=',Model%me
+!     if (Model%me .eq. 0)
+!    &   print *,' len=',len,' rla=',rla(len),' rlo=',rlo(len)
+          ENDDO                 !-----END BLOCK SIZE LOOP------------------------------
+        ENDDO                   !-----END BLOCK LOOP-------------------------------
+
+        if (Model%me == 109) write(3000+Model%me,*)' me=',Model%me,' water len=',len
+!
+!       write(2000+Model%me,*)' me=',Model%me,' water len=',len
+        if (len > 0) then
+!       write(2000+Model%me,*)' me=',Model%me,' water len=',len,' slifcs=',slifcs(1:len)
+          allocate (albfcs(len,4),  alffcs(len,2),  smcfcs(len,Model%lsoil), &
+                         stcfcs(len,Model%lsoil), slcfcs(len,Model%lsoil))
+          albfcs(1:len,1:4) = ALBFC1(1:len,1:4)
+          alffcs(1:len,1:2) = ALFFC1(1:len,1:2)
+          do ls = 1,Model%lsoil
+            do ix=1,len
+              smcfcs(ix,ls) = SMCFC1(ix,ls)
+              stcfcs(ix,ls) = STCFC1(ix,ls)
+              slcfcs(ix,ls) = SLCFC1(ix,ls)
+            enddo
+          enddo
+
+! check
+!         call mymaxmin(slifcs,len,len,1,'slifcs')
+!         call mymaxmin(slmask,len,len,1,'slmsk')
+!
+#ifndef INTERNAL_FILE_NML
+          inquire (file=trim(Model%fn_nml),exist=exists)
+          if (.not. exists) then
+            write(6,*) 'gcycle:: namelist file: ',trim(Model%fn_nml),' does not exist'
+            stop
+          else
+            open (unit=Model%nlunit, file=trim(Model%fn_nml), action='READ', status='OLD', iostat=ios)
+            rewind (Model%nlunit)
+          endif
+#endif
+          CALL SFCCYCLE2(9998, len, Model%lsoil, SIG1T, Model%fhcyc,  &
+                         Model%idate(4), Model%idate(2),              &
+                         Model%idate(3), Model%idate(1),              &
+                         Model%phour, RLA, RLO, SLMASK,               &
+!                        Model%fhour, RLA, RLO, SLMASK,               &
+                         OROG, OROG_UF, Model%USE_UFO, Model%nst_anl, &
+                         SIHFCS, SICFCS, SITFCS, SWDFCS, SLCFCS,      &
+                         VMNFCS, VMXFCS, SLPFCS, ABSFCS, TSFFCS,      &
+                         SNOFCS, ZORFCS, ALBFCS, TG3FCS, CNPFCS,      &
+                         SMCFCS, STCFCS, SLIFCS, AISFCS,              &
+                         VEGFCS, VETFCS, SOTFCS, ALFFCS, CVFCS,       &
+                         CVBFCS, CVTFCS, Model%me, Model%nlunit,      &
+                         size(Model%input_nml_file),                  &
+                         Model%input_nml_file,                        &
+                         lake, Model%min_lakeice, Model%min_seaice,   &
+                         Model%ialb, Model%isot, Model%ivegsrc,       &
+                         trim(tile_num_ch), i_index, j_index)
+#ifndef INTERNAL_FILE_NML
+          close (Model%nlunit)
+#endif
+
+          len = 0
+          do nb = 1,nblks
+            do ix = 1,size(Grid(nb)%xlat,1)
+              if (Sfcprop(nb)%landfrac(ix) < epsln) then
+                len = len + 1
+                Sfcprop(nb)%slmsk  (ix) = SLIFCS  (len)
+                if ( Model%nstf_name(1) > 0 ) then
+                   Sfcprop(nb)%tref(ix) = TSFFCS  (len)
+!                 if ( Model%nstf_name(2) == 0 ) then
+!                   dt_warm = (Sfcprop(nb)%xt(ix) + Sfcprop(nb)%xt(ix) ) &
+!                           / Sfcprop(nb)%xz(ix)
+!                   Sfcprop(nb)%tsfco(ix) = Sfcprop(nb)%tref(ix)         &
+!                                         + dt_warm - Sfcprop(nb)%dt_cool(ix)
+!                 endif
+                else
+                   Sfcprop(nb)%tsfc(ix)  = TSFFCS  (len)
+                   Sfcprop(nb)%tsfco(ix) = TSFFCS  (len)
+                  if (slifcs(len) > 1.9_kind_phys) then
+                    Sfcprop(nb)%tsfco(ix) = con_tice
+                  endif
+                endif
+                Sfcprop(nb)%weasd  (ix) = SNOFCS  (len)
+                Sfcprop(nb)%zorll  (ix) = ZORFCS  (len)
+                if (SLIFCS(len) > 1.9_kind_phys) then
+                  Sfcprop(nb)%zorli(ix) = ZORFCS  (len)
+                elseif (SLIFCS(len) < 0.1_kind_phys) then
+                  Sfcprop(nb)%zorlo(ix) = ZORFCS  (len)
+                endif
+                Sfcprop(nb)%tg3    (ix) = TG3FCS  (len)
+                Sfcprop(nb)%canopy (ix) = CNPFCS  (len)
+!               Sfcprop(nb)%f10m   (ix) = F10MFCS (len)
+                Sfcprop(nb)%vfrac  (ix) = VEGFCS  (len)
+                Sfcprop(nb)%vtype  (ix) = VETFCS  (len)
+                Sfcprop(nb)%stype  (ix) = SOTFCS  (len)
+                Cldprop(nb)%cv     (ix) = CVFCS   (len)
+                Cldprop(nb)%cvb    (ix) = CVBFCS  (len)
+                Cldprop(nb)%cvt    (ix) = CVTFCS  (len)
+                Sfcprop(nb)%snowd  (ix) = SWDFCS  (len)
+                Sfcprop(nb)%hice   (ix) = SIHFCS  (len)
+                Sfcprop(nb)%fice   (ix) = SICFCS  (len)
+                Sfcprop(nb)%tisfc  (ix) = SITFCS  (len)
+                Sfcprop(nb)%shdmin (ix) = VMNFCS  (len)
+                Sfcprop(nb)%shdmax (ix) = VMXFCS  (len)
+                Sfcprop(nb)%slope  (ix) = SLPFCS  (len)
+                Sfcprop(nb)%snoalb (ix) = ABSFCS  (len)
+
+                Sfcprop(nb)%facsf  (ix) = ALFFCS  (len,1)
+                Sfcprop(nb)%facwf  (ix) = ALFFCS  (len,2)
+
+                Sfcprop(nb)%alvsf  (ix) = ALBFCS  (len,1)
+                Sfcprop(nb)%alvwf  (ix) = ALBFCS  (len,2)
+                Sfcprop(nb)%alnsf  (ix) = ALBFCS  (len,3)
+                Sfcprop(nb)%alnwf  (ix) = ALBFCS  (len,4)
+!               do ls = 1,Model%lsoil
+!                 Sfcprop(nb)%smc (ix,ls) = SMCFCS (len,ls)
+!                 Sfcprop(nb)%stc (ix,ls) = STCFCS (len,ls)
+!                 Sfcprop(nb)%slc (ix,ls) = SLCFCS (len,ls)
+!                 if (ls <= Model%kice) Sfcprop(nb)%tiice (ix,ls) = STCFCS (len,ls)
+!               enddo
+
+              endif
+            ENDDO                 !-----END BLOCK SIZE LOOP--------------------------
+          ENDDO                   !-----END BLOCK LOOP-------------------------------
+
+          deallocate (albfcs,  alffcs,  smcfcs, stcfcs, slcfcs) 
+        if (Model%me == 109) write(3000+Model%me,*)' me=',Model%me,' water len2=',len
+        endif
+! 
+
+      else                      ! full grid i.e. frac_grid = .fasle.
+                                ! ----------------------------------
+
+        len = 0
+        do nb = 1,nblks
+          do ix = 1,size(Grid(nb)%xlat,1)
+            len = len + 1
+            RLA     (len)          = Grid(nb)%xlat      (ix) * pifac
+            RLO     (len)          = Grid(nb)%xlon      (ix) * pifac
+            OROG    (len)          = Sfcprop(nb)%oro    (ix)
+            OROG_UF (len)          = Sfcprop(nb)%oro_uf (ix)
+            SLIFCS  (len)          = Sfcprop(nb)%slmsk  (ix)
+            if ( Model%nstf_name(1) > 0 ) then
+              TSFFCS(len)          = Sfcprop(nb)%tref   (ix)
+            else
+              TSFFCS(len)          = Sfcprop(nb)%tsfc   (ix)
+            endif
+            SNOFCS  (len)          = Sfcprop(nb)%weasd  (ix)
+            ZORFCS  (len)          = Sfcprop(nb)%zorll  (ix)
+            if (SLIFCS(len) > 1.9_kind_phys .and. .not. Model%frac_grid) then
+              ZORFCS  (len)        = Sfcprop(nb)%zorli  (ix)
+            elseif (SLIFCS(len) < 0.1_kind_phys .and. .not. Model%frac_grid) then
+              ZORFCS  (len)        = Sfcprop(nb)%zorlo  (ix)
+            endif
+            TG3FCS  (len)          = Sfcprop(nb)%tg3    (ix)
+            CNPFCS  (len)          = Sfcprop(nb)%canopy (ix)
+!           F10MFCS (len)          = Sfcprop(nb)%f10m   (ix)
+            VEGFCS  (len)          = Sfcprop(nb)%vfrac  (ix)
+            VETFCS  (len)          = Sfcprop(nb)%vtype  (ix)
+            SOTFCS  (len)          = Sfcprop(nb)%stype  (ix)
+            CVFCS   (len)          = Cldprop(nb)%cv     (ix)
+            CVBFCS  (len)          = Cldprop(nb)%cvb    (ix)
+            CVTFCS  (len)          = Cldprop(nb)%cvt    (ix)
+            SWDFCS  (len)          = Sfcprop(nb)%snowd  (ix)
+            SIHFCS  (len)          = Sfcprop(nb)%hice   (ix)
+            SICFCS  (len)          = Sfcprop(nb)%fice   (ix)
+            SITFCS  (len)          = Sfcprop(nb)%tisfc  (ix)
+            VMNFCS  (len)          = Sfcprop(nb)%shdmin (ix)
+            VMXFCS  (len)          = Sfcprop(nb)%shdmax (ix)
+            SLPFCS  (len)          = Sfcprop(nb)%slope  (ix)
+            ABSFCS  (len)          = Sfcprop(nb)%snoalb (ix)
+
+            ALFFC1  (len,1)   = Sfcprop(nb)%facsf  (ix)
+            ALFFC1  (len,2)   = Sfcprop(nb)%facwf  (ix)
+
+            ALBFC1  (len,1) = Sfcprop(nb)%alvsf  (ix)
+            ALBFC1  (len,2) = Sfcprop(nb)%alvwf  (ix)
+            ALBFC1  (len,3) = Sfcprop(nb)%alnsf  (ix)
+            ALBFC1  (len,4) = Sfcprop(nb)%alnwf  (ix)
+
+            do ls = 1,Model%lsoil
+              SMCFC1 (len,ls) = Sfcprop(nb)%smc (ix,ls)
+              STCFC1 (len,ls) = Sfcprop(nb)%stc (ix,ls)
+              SLCFC1 (len,ls) = Sfcprop(nb)%slc (ix,ls)
+            enddo
+
+            IF (SLIFCS(len) < 0.1_kind_phys .OR. SLIFCS(len) > 1.5_kind_phys) THEN
+               SLMASK(len) = 0.0_kind_phys
+            ELSE
+               SLMASK(len) = 1.0_kind_phys
+            ENDIF
+
+            IF (SLIFCS(len) > 1.99_kind_phys) THEN
+              AISFCS(len) = 1.0_kind_phys
+            ELSE
+              AISFCS(len) = 0.0_kind_phys
+            ENDIF
+            if (Sfcprop(nb)%lakefrac(ix) > 0.0_kind_phys) then
+              lake(len) = .true.
+            else
+              lake(len) = .false.
+            endif
 
 !     if (Model%me .eq. 0)
 !    &   print *,' len=',len,' rla=',rla(len),' rlo=',rlo(len)
-        ENDDO                 !-----END BLOCK SIZE LOOP------------------------------
-      ENDDO                   !-----END BLOCK LOOP-------------------------------
+          ENDDO                 !-----END BLOCK SIZE LOOP------------------------------
+        ENDDO                   !-----END BLOCK LOOP-------------------------------
 
 ! check
-!     call mymaxmin(slifcs,len,len,1,'slifcs')
-!     call mymaxmin(slmask,len,len,1,'slmsk')
+!       call mymaxmin(slifcs,len,len,1,'slifcs')
+!       call mymaxmin(slmask,len,len,1,'slmsk')
 !
 #ifndef INTERNAL_FILE_NML
-      inquire (file=trim(Model%fn_nml),exist=exists)
-      if (.not. exists) then
-        write(6,*) 'gcycle:: namelist file: ',trim(Model%fn_nml),' does not exist'
-        stop
-      else
-        open (unit=Model%nlunit, file=trim(Model%fn_nml), action='READ', status='OLD', iostat=ios)
-        rewind (Model%nlunit)
-      endif
+        inquire (file=trim(Model%fn_nml),exist=exists)
+        if (.not. exists) then
+          write(6,*) 'gcycle:: namelist file: ',trim(Model%fn_nml),' does not exist'
+          stop
+        else
+          open (unit=Model%nlunit, file=trim(Model%fn_nml), action='READ', status='OLD', iostat=ios)
+          rewind (Model%nlunit)
+        endif
 #endif
-      CALL SFCCYCLE (9998, npts, Model%lsoil, SIG1T, Model%fhcyc, &
-                     Model%idate(4), Model%idate(2),              &
-                     Model%idate(3), Model%idate(1),              &
-                     Model%phour, RLA, RLO, SLMASK,               &
-!                    Model%fhour, RLA, RLO, SLMASK,               &
-                     OROG, OROG_UF, Model%USE_UFO, Model%nst_anl, &
-                     SIHFCS, SICFCS, SITFCS, SWDFCS, SLCFC1,      &
-                     VMNFCS, VMXFCS, SLPFCS, ABSFCS, TSFFCS,      &
-                     SNOFCS, ZORFCS, ALBFC1, TG3FCS, CNPFCS,      &
-                     SMCFC1, STCFC1, SLIFCS, AISFCS,              &
-                     VEGFCS, VETFCS, SOTFCS, ALFFC1, CVFCS,       &
-                     CVBFCS, CVTFCS, Model%me, Model%nlunit,      &
-                     size(Model%input_nml_file),                  &
-                     Model%input_nml_file,                        &
-                     lake, Model%min_lakeice, Model%min_seaice,   &
-                     Model%ialb, Model%isot, Model%ivegsrc,       &
-                     trim(tile_num_ch), i_index, j_index)
+        CALL SFCCYCLE (9998, npts, Model%lsoil, SIG1T, Model%fhcyc, &
+                       Model%idate(4), Model%idate(2),              &
+                       Model%idate(3), Model%idate(1),              &
+                       Model%phour, RLA, RLO, SLMASK,               &
+!                      Model%fhour, RLA, RLO, SLMASK,               &
+                       OROG, OROG_UF, Model%USE_UFO, Model%nst_anl, &
+                       SIHFCS, SICFCS, SITFCS, SWDFCS, SLCFC1,      &
+                       VMNFCS, VMXFCS, SLPFCS, ABSFCS, TSFFCS,      &
+                       SNOFCS, ZORFCS, ALBFC1, TG3FCS, CNPFCS,      &
+                       SMCFC1, STCFC1, SLIFCS, AISFCS,              &
+                       VEGFCS, VETFCS, SOTFCS, ALFFC1, CVFCS,       &
+                       CVBFCS, CVTFCS, Model%me, Model%nlunit,      &
+                       size(Model%input_nml_file),                  &
+                       Model%input_nml_file,                        &
+                       lake, Model%min_lakeice, Model%min_seaice,   &
+                       Model%ialb, Model%isot, Model%ivegsrc,       &
+                       trim(tile_num_ch), i_index, j_index)
 #ifndef INTERNAL_FILE_NML
-      close (Model%nlunit)
+        close (Model%nlunit)
 #endif
 
-      len = 0
-      do nb = 1,nblks
-        do ix = 1,size(Grid(nb)%xlat,1)
-          len = len + 1
-          Sfcprop(nb)%slmsk  (ix) = SLIFCS  (len)
-          if ( Model%nstf_name(1) > 0 ) then
-             Sfcprop(nb)%tref(ix) = TSFFCS  (len)
-!           if ( Model%nstf_name(2) == 0 ) then
-!             dt_warm = (Sfcprop(nb)%xt(ix) + Sfcprop(nb)%xt(ix) ) &
-!                     / Sfcprop(nb)%xz(ix)
-!             Sfcprop(nb)%tsfco(ix) = Sfcprop(nb)%tref(ix)         &
-!                                   + dt_warm - Sfcprop(nb)%dt_cool(ix)
-!           endif
-          else
-             Sfcprop(nb)%tsfc(ix)  = TSFFCS  (len)
-             Sfcprop(nb)%tsfco(ix) = TSFFCS  (len)
-            if (slifcs(len) > 1.9_kind_phys) then
-              Sfcprop(nb)%tsfco(ix) = con_tice
+        len = 0
+        do nb = 1,nblks
+          do ix = 1,size(Grid(nb)%xlat,1)
+            len = len + 1
+            Sfcprop(nb)%slmsk  (ix) = SLIFCS  (len)
+            if ( Model%nstf_name(1) > 0 ) then
+               Sfcprop(nb)%tref(ix) = TSFFCS  (len)
+!             if ( Model%nstf_name(2) == 0 ) then
+!               dt_warm = (Sfcprop(nb)%xt(ix) + Sfcprop(nb)%xt(ix) ) &
+!                       / Sfcprop(nb)%xz(ix)
+!               Sfcprop(nb)%tsfco(ix) = Sfcprop(nb)%tref(ix)         &
+!                                     + dt_warm - Sfcprop(nb)%dt_cool(ix)
+!             endif
+            else
+               Sfcprop(nb)%tsfc(ix)  = TSFFCS  (len)
+               Sfcprop(nb)%tsfco(ix) = TSFFCS  (len)
+              if (slifcs(len) > 1.9_kind_phys) then
+                Sfcprop(nb)%tsfco(ix) = con_tice
+              endif
             endif
-          endif
-          Sfcprop(nb)%weasd  (ix) = SNOFCS  (len)
-          Sfcprop(nb)%zorll  (ix) = ZORFCS  (len)
-          if (SLIFCS(len) > 1.9_kind_phys .and. .not. Model%frac_grid) then
-            Sfcprop(nb)%zorli(ix) = ZORFCS  (len)
-          elseif (SLIFCS(len) < 0.1_kind_phys .and. .not. Model%frac_grid) then
-            Sfcprop(nb)%zorlo(ix) = ZORFCS  (len)
-          endif
-          Sfcprop(nb)%tg3    (ix) = TG3FCS  (len)
-          Sfcprop(nb)%canopy (ix) = CNPFCS  (len)
-!         Sfcprop(nb)%f10m   (ix) = F10MFCS (len)
-          Sfcprop(nb)%vfrac  (ix) = VEGFCS  (len)
-          Sfcprop(nb)%vtype  (ix) = VETFCS  (len)
-          Sfcprop(nb)%stype  (ix) = SOTFCS  (len)
-          Cldprop(nb)%cv     (ix) = CVFCS   (len)
-          Cldprop(nb)%cvb    (ix) = CVBFCS  (len)
-          Cldprop(nb)%cvt    (ix) = CVTFCS  (len)
-          Sfcprop(nb)%snowd  (ix) = SWDFCS  (len)
-          Sfcprop(nb)%hice   (ix) = SIHFCS  (len)
-          Sfcprop(nb)%fice   (ix) = SICFCS  (len)
-          Sfcprop(nb)%tisfc  (ix) = SITFCS  (len)
-          Sfcprop(nb)%shdmin (ix) = VMNFCS  (len)
-          Sfcprop(nb)%shdmax (ix) = VMXFCS  (len)
-          Sfcprop(nb)%slope  (ix) = SLPFCS  (len)
-          Sfcprop(nb)%snoalb (ix) = ABSFCS  (len)
+            Sfcprop(nb)%weasd  (ix) = SNOFCS  (len)
+            Sfcprop(nb)%zorll  (ix) = ZORFCS  (len)
+            if (SLIFCS(len) > 1.9_kind_phys .and. .not. Model%frac_grid) then
+              Sfcprop(nb)%zorli(ix) = ZORFCS  (len)
+            elseif (SLIFCS(len) < 0.1_kind_phys .and. .not. Model%frac_grid) then
+              Sfcprop(nb)%zorlo(ix) = ZORFCS  (len)
+            endif
+            Sfcprop(nb)%tg3    (ix) = TG3FCS  (len)
+            Sfcprop(nb)%canopy (ix) = CNPFCS  (len)
+!           Sfcprop(nb)%f10m   (ix) = F10MFCS (len)
+            Sfcprop(nb)%vfrac  (ix) = VEGFCS  (len)
+            Sfcprop(nb)%vtype  (ix) = VETFCS  (len)
+            Sfcprop(nb)%stype  (ix) = SOTFCS  (len)
+            Cldprop(nb)%cv     (ix) = CVFCS   (len)
+            Cldprop(nb)%cvb    (ix) = CVBFCS  (len)
+            Cldprop(nb)%cvt    (ix) = CVTFCS  (len)
+            Sfcprop(nb)%snowd  (ix) = SWDFCS  (len)
+            Sfcprop(nb)%hice   (ix) = SIHFCS  (len)
+            Sfcprop(nb)%fice   (ix) = SICFCS  (len)
+            Sfcprop(nb)%tisfc  (ix) = SITFCS  (len)
+            Sfcprop(nb)%shdmin (ix) = VMNFCS  (len)
+            Sfcprop(nb)%shdmax (ix) = VMXFCS  (len)
+            Sfcprop(nb)%slope  (ix) = SLPFCS  (len)
+            Sfcprop(nb)%snoalb (ix) = ABSFCS  (len)
+  
+            Sfcprop(nb)%facsf  (ix) = ALFFC1  (len,1)
+            Sfcprop(nb)%facwf  (ix) = ALFFC1  (len,2)
 
-          Sfcprop(nb)%facsf  (ix) = ALFFC1  (len       )
-          Sfcprop(nb)%facwf  (ix) = ALFFC1  (len + npts)
+            Sfcprop(nb)%alvsf  (ix) = ALBFC1  (len,1)
+            Sfcprop(nb)%alvwf  (ix) = ALBFC1  (len,2)
+            Sfcprop(nb)%alnsf  (ix) = ALBFC1  (len,3)
+            Sfcprop(nb)%alnwf  (ix) = ALBFC1  (len,4)
+            do ls = 1,Model%lsoil
+              Sfcprop(nb)%smc (ix,ls) = SMCFC1 (len,ls)
+              Sfcprop(nb)%stc (ix,ls) = STCFC1 (len,ls)
+              Sfcprop(nb)%slc (ix,ls) = SLCFC1 (len,ls)
+              if (ls<=Model%kice) Sfcprop(nb)%tiice (ix,ls) = STCFC1 (len,ls)
+            enddo
+          ENDDO                 !-----END BLOCK SIZE LOOP--------------------------
+        ENDDO                   !-----END BLOCK LOOP-------------------------------
 
-          Sfcprop(nb)%alvsf  (ix) = ALBFC1  (len         )
-          Sfcprop(nb)%alvwf  (ix) = ALBFC1  (len + npts  )
-          Sfcprop(nb)%alnsf  (ix) = ALBFC1  (len + npts*2)
-          Sfcprop(nb)%alnwf  (ix) = ALBFC1  (len + npts*3)
-          do ls = 1,Model%lsoil
-            ll = len + (ls-1)*npts
-            Sfcprop(nb)%smc (ix,ls) = SMCFC1 (ll)
-            Sfcprop(nb)%stc (ix,ls) = STCFC1 (ll)
-            Sfcprop(nb)%slc (ix,ls) = SLCFC1 (ll)
-            if (ls<=Model%kice) Sfcprop(nb)%tiice (ix,ls) = STCFC1 (ll)
-          enddo
-        ENDDO                 !-----END BLOCK SIZE LOOP--------------------------
-      ENDDO                   !-----END BLOCK LOOP-------------------------------
+      endif                     ! if frac_grid loop
 
 ! check
 !     call mymaxmin(slifcs,len,len,1,'slifcs')

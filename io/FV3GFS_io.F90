@@ -1059,35 +1059,39 @@ module FV3GFS_io_mod
           Sfcprop(nb)%zorlw(ix)  = Sfcprop(nb)%zorlo(ix)
         endif
 
-        if(Model%frac_grid) then ! obtain slmsk from landfrac
+!-------------------------------------------------
+!        if(Model%frac_grid) then ! obtain slmsk from landfrac
 !! next 5 lines are temporary till lake model is available
-          if (Sfcprop(nb)%lakefrac(ix) > zero) then
-!           Sfcprop(nb)%lakefrac(ix) = nint(Sfcprop(nb)%lakefrac(ix))
-            Sfcprop(nb)%landfrac(ix) = one - Sfcprop(nb)%lakefrac(ix)
-            if (Sfcprop(nb)%lakefrac(ix) == zero) Sfcprop(nb)%fice(ix) = zero
-          endif 
-          Sfcprop(nb)%slmsk(ix) = ceiling(Sfcprop(nb)%landfrac(ix))
-          if (Sfcprop(nb)%fice(ix) > Model%min_lakeice .and. Sfcprop(nb)%landfrac(ix) == zero) Sfcprop(nb)%slmsk(ix) = 2 ! land dominates ice if co-exist
-        else ! obtain landfrac from slmsk
-          if (Sfcprop(nb)%slmsk(ix) > 1.9_r8) then
-            Sfcprop(nb)%landfrac(ix) = zero
-          else
-            Sfcprop(nb)%landfrac(ix) = Sfcprop(nb)%slmsk(ix)
-          endif
-        endif
+!         if (Sfcprop(nb)%lakefrac(ix) > zero) then
+!         endif 
+!         Sfcprop(nb)%slmsk(ix) = ceiling(Sfcprop(nb)%landfrac(ix))
+!         if (Sfcprop(nb)%fice(ix) > Model%min_lakeice .and. Sfcprop(nb)%landfrac(ix) == zero) Sfcprop(nb)%slmsk(ix) = 2 ! land dominates ice if co-exist
+!       else ! obtain landfrac from slmsk
+!         if (Sfcprop(nb)%slmsk(ix) > 1.9_r8) then
+!           Sfcprop(nb)%landfrac(ix) = zero
+!         else
+!           Sfcprop(nb)%landfrac(ix) = Sfcprop(nb)%slmsk(ix)
+!         endif
+!       endif
+!-------------------------------------------------
 
-        if (Sfcprop(nb)%lakefrac(ix) > zero) then
-          Sfcprop(nb)%oceanfrac(ix) = zero ! lake & ocean don't coexist in a cell
-!         if (Sfcprop(nb)%fice(ix) < Model%min_lakeice) then
-!            Sfcprop(nb)%fice(ix) = zero
-!            if (Sfcprop(nb)%slmsk(ix) == 2) Sfcprop(nb)%slmsk(ix) = 0
-!         endif
+        if (Sfcprop(nb)%landfrac(ix) < drythresh) Sfcprop(nb)%landfrac(ix) = zero
+        if (Model%frac_grid) then
+          if (Sfcprop(nb)%lakefrac(ix) > zero) then
+            Sfcprop(nb)%oceanfrac(ix) = zero ! lake & ocean don't coexist in a cell
+          else
+            Sfcprop(nb)%oceanfrac(ix) = one - Sfcprop(nb)%landfrac(ix)
+          endif
         else
-          Sfcprop(nb)%oceanfrac(ix) = one - Sfcprop(nb)%landfrac(ix)
-!         if (Sfcprop(nb)%fice(ix) < Model%min_seaice) then
-!            Sfcprop(nb)%fice(ix) = zero
-!            if (Sfcprop(nb)%slmsk(ix) == 2) Sfcprop(nb)%slmsk(ix) = 0
-!         endif
+          if (Sfcprop(nb)%lakefrac(ix) > zero) then
+            Sfcprop(nb)%oceanfrac(ix) = zero
+            Sfcprop(nb)%landfrac(ix)  = zero
+            Sfcprop(nb)%lakefrac(ix)  = one
+          elseif (Sfcprop(nb)%landfrac(ix) >= drythresh) then
+            Sfcprop(nb)%oceanfrac(ix) = zero
+          else
+            Sfcprop(nb)%oceanfrac(ix) = one
+          endif
         endif
         !
         !--- NSSTM variables

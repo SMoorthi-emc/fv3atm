@@ -180,6 +180,7 @@ SRCS_F = \
 	   ./physics/machine.F                                                       \
 	   ./physics/num_parthds.F                                                   \
 	   ./physics/sfcsub.F                                                        \
+	   ./physics/sfcsub2.F                                                       \
 	   ./physics/wv_saturation.F
 
 SRCS_F90 = \

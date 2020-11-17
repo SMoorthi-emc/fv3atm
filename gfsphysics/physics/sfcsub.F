@@ -1,23 +1,34 @@
       module sfccyc_module
       implicit none
-      save
+!     save
+      private
+      public sfccycle
 !
 !  grib code for each parameter - used in subroutines sfccycle and setrmsk.
 !
-      integer kpdtsf,kpdwet,kpdsno,kpdzor,kpdais,kpdtg3,kpdplr,kpdgla,
-     &        kpdmxi,kpdscv,kpdsmc,kpdoro,kpdmsk,kpdstc,kpdacn,kpdveg,
-     &        kpdvet,kpdsot
-     &,       kpdvmn,kpdvmx,kpdslp,kpdabs
-     &,       kpdsnd, kpdabs_0, kpdabs_1, kpdalb(4)
-      parameter(kpdtsf=11,  kpdwet=86, kpdsno=65,  kpdzor=83,
-!    1          kpdalb=84,  kpdais=91, kpdtg3=11,  kpdplr=224,
-     1          kpdais=91,  kpdtg3=11, kpdplr=224,
-     2          kpdgla=238, kpdmxi=91, kpdscv=238, kpdsmc=144,
-     3          kpdoro=8,   kpdmsk=81, kpdstc=11,  kpdacn=91, kpdveg=87,
+      integer, parameter :: kpdtsf=11,  kpdwet=86, kpdsno=65, kpdzor=83,&
+     &          kpdais=91,  kpdtg3=11, kpdplr=224,                      &
+     &          kpdgla=238, kpdmxi=91, kpdscv=238, kpdsmc=144,          &
+     &          kpdoro=8,   kpdmsk=81, kpdstc=11,  kpdacn=91, kpdveg=87,&
 !cbosu  max snow albedo uses a grib id number of 159, not 255.
-     &          kpdvmn=255, kpdvmx=255,kpdslp=236, kpdabs_0=255,    
-     &          kpdvet=225, kpdsot=224,kpdabs_1=159,
-     &          kpdsnd=66 )
+     &          kpdvmn=255, kpdvmx=255,kpdslp=236,   kpdabs_0=255,      &
+     &          kpdvet=225, kpdsot=224,kpdabs_1=159, kpdsnd=66
+!
+      integer :: kpdabs, kpdalb(4)
+!     integer kpdtsf,kpdwet,kpdsno,kpdzor,kpdais,kpdtg3,kpdplr,kpdgla,
+!    &        kpdmxi,kpdscv,kpdsmc,kpdoro,kpdmsk,kpdstc,kpdacn,kpdveg,
+!    &        kpdvet,kpdsot
+!    &,       kpdvmn,kpdvmx,kpdslp,kpdabs
+!    &,       kpdsnd, kpdabs_0, kpdabs_1, kpdalb(4)
+!     parameter(kpdtsf=11,  kpdwet=86, kpdsno=65,  kpdzor=83,
+!    1          kpdalb=84,  kpdais=91, kpdtg3=11,  kpdplr=224,
+!    1          kpdais=91,  kpdtg3=11, kpdplr=224,
+!    2          kpdgla=238, kpdmxi=91, kpdscv=238, kpdsmc=144,
+!    3          kpdoro=8,   kpdmsk=81, kpdstc=11,  kpdacn=91, kpdveg=87,
+!cbosu  max snow albedo uses a grib id number of 159, not 255.
+!    &          kpdvmn=255, kpdvmx=255,kpdslp=236, kpdabs_0=255,    
+!    &          kpdvet=225, kpdsot=224,kpdabs_1=159,
+!    &          kpdsnd=66 )
 !
       integer, parameter :: kpdalb_0(4)=(/212,215,213,216/)
       integer, parameter :: kpdalb_1(4)=(/189,190,191,192/)
@@ -27,7 +38,7 @@
       integer            :: veg_type_landice
       integer            :: soil_type_landice
 !
-      end module sfccyc_module
+      contains
       subroutine sfccycle(lugb,len,lsoil,sig1t,deltsfc                  &
      &,                   iy,im,id,ih,fh                                &
      &,                   rla, rlo, slmask,orog,orog_uf,use_ufo,nst_anl &
@@ -43,8 +54,9 @@
      &,                   ialb,isot,ivegsrc,tile_num_ch,i_index,j_index)
 !
       use machine , only : kind_io8,kind_io4
-      use sfccyc_module
+!     use sfccyc_module
       implicit none
+!
       character(len=*),     intent(in) :: tile_num_ch
       integer,              intent(in) :: i_index(len), j_index(len)
       logical,              intent(in) :: use_ufo, nst_anl
@@ -2683,7 +2695,7 @@
       subroutine hmskrd(lugb,imsk,jmsk,fnmskh,                          &
      &                  kpds5,slmskh,gausm,blnmsk,bltmsk,me)
       use machine , only : kind_io8,kind_io4
-      use sfccyc_module, only : mdata, xdata, ydata
+!     use sfccyc_module, only : mdata, xdata, ydata
       implicit none
       integer kpds5,me,i,imsk,jmsk,lugb
 !
@@ -2716,7 +2728,7 @@
       subroutine fixrdg(lugb,idim,jdim,fngrib,                          &
      &                  kpds5,gdata,gaus,blno,blto,me)
       use machine      , only : kind_io8,kind_io4
-      use sfccyc_module, only : mdata
+!     use sfccyc_module, only : mdata
       implicit none
       integer lgrib,n,lskip,jret,j,ndata,lugi,jdim,idim,lugb,
      &        iret, me,kpds5,kdata,i,w3kindreal,w3kindint
@@ -3081,10 +3093,10 @@
 !
 !      if (me == 0) print *,' num_threads =',num_threads,' me=',me
 !
-!     if(me .eq. 0) then
-!     print *,'rlon=',rlon,' me=',me
-!     print *,'rlat=',rlat,' me=',me,' imxin=',imxin,' jmxin=',jmxin
-!     endif
+      if(me .eq. 0) then
+      print *,'rlon=',rlon,' me=',me
+      print *,'rlat=',rlat,' me=',me,' imxin=',imxin,' jmxin=',jmxin
+      endif
 !
 !     do j=1,jmxin
 !       if(rlat.gt.0.) then
@@ -3094,16 +3106,16 @@
 !       endif
 !     enddo
 !
-!     if (me .eq. 0) then
-!       print *,'rinlat='
-!       print *,(rinlat(j),j=1,jmxin)
-!       print *,'rinlon='
-!       print *,(rinlon(i),i=1,imxin)
+      if (me .eq. 0) then
+        print *,'rinlat='
+        print *,(rinlat(j),j=1,jmxin)
+        print *,'rinlon='
+        print *,(rinlon(i),i=1,imxin)
 !
-!       print *,'outlat='
-!       print *,(outlat(j),j=1,len)
-!       print *,(outlon(j),j=1,len)
-!     endif
+        print *,'outlat='
+        print *,(outlat(j),j=1,len)
+        print *,(outlon(j),j=1,len),' len=',len
+      endif
 !
 !     do i=1,imxin
 !       rinlon(i) = rlon + float(i-1)*dloin
@@ -4653,7 +4665,7 @@
      &                 irtvmn,irtvmx,irtslp,irtabs,                     &
      &                 irtvet,irtsot,irtalf, landice, me)
       use machine , only : kind_io8,kind_io4
-      use sfccyc_module, only : veg_type_landice, soil_type_landice
+!     use sfccyc_module, only : veg_type_landice, soil_type_landice
       implicit none
       integer k,i,im,id,iy,len,lsoil,ih,irtacn,irtsmc,irtscv,irtais,    &
      &        irttg3,irtstc,irtalf,me,irtsot,irtveg,irtvet, irtzor,     &
@@ -6078,7 +6090,7 @@
      &                   data,imax,jmax,rlnout,rltout,lmask,rslmsk      &
      &,                  gaus,blno, blto, kgds1, kpds4, lbms)
       use machine , only : kind_io8,kind_io4
-      use sfccyc_module
+!     use sfccyc_module
       implicit none
       real (kind=kind_io8) blno,blto,wlon,rnlat,crit,data_max
       integer i,j,ijmax,jgaul,igaul,kpds5,jmax,imax, kgds1, kspla
@@ -8186,7 +8198,7 @@ cjfe
      &,                imsk, jmsk, slmskh, gaus,blno, blto              &
      &,                outlat, outlon, me)
       use machine ,      only : kind_io8,kind_io4
-      use sfccyc_module, only : mdata
+!     use sfccyc_module, only : mdata
       implicit none
       integer imax,jmax,ijmax,i,j,n,jret,inttyp,iret,imsk,              &
      &        jmsk,len,lugb,kpds5,mon,lskip,lgrib,ndata,lugi,me,kmami   &
@@ -8363,7 +8375,7 @@ cjfe
      &,                 imsk, jmsk, slmskh, gaus,blno, blto             &
      &,                 outlat, outlon, me)
       use machine      , only : kind_io8,kind_io4
-      use sfccyc_module, only : mdata
+!     use sfccyc_module, only : mdata
       implicit none
       integer nrepmx,nvalid,imo,iyr,idy,jret,ihr,nrept,lskip,lugi,      &
      &        lgrib,j,ndata,i,inttyp,jmax,imax,ijmax,ij,jday,len,iret,  &
@@ -8698,3 +8710,4 @@ cjfe
       enddo
       return
       end
+      end module sfccyc_module
