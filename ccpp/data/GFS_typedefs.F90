@@ -6852,7 +6852,7 @@ module GFS_typedefs
       if (Model%ntke > 0) Interstitial%nvdiff = Interstitial%nvdiff + 1    !  adding tke to the list
     endif
 
-    Interstitial%ntkev = Interstitial%nvdiff
+    if (Model%ntke > 0) Interstitial%ntkev = Interstitial%nvdiff
 
     if (Model%ntiw > 0) then
       if (Model%ntclamt > 0) then
